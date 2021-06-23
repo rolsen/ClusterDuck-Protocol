@@ -16,6 +16,8 @@
 class Duck {
 
 public:
+  using rxDoneCallback = void (*)(std::vector<byte> data );
+
   /**
    * @brief Construct a new Duck object.
    *

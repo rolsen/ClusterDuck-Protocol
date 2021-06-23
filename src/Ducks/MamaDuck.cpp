@@ -138,6 +138,9 @@ void MamaDuck::handleReceivedPacket() {
       }
     }
 
+    recvDataCallback(rxPacket->getBuffer());
+    loginfo("MAMA handleReceivedPacket() DONE");
+
     err = duckRadio->relayPacket(rxPacket);
     if (err != DUCK_ERR_NONE) {
       logerr("====> ERROR handleReceivedPacket failed to relay. rc = " + String(err));

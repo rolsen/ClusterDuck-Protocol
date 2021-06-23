@@ -39,6 +39,8 @@ public:
    int setupWithDefaults(std::vector<byte> deviceId, String ssid = "",
                             String password = "");
 
+  void onReceiveDuckData(rxDoneCallback cb) { this->recvDataCallback = cb; }
+
   /**
    * @brief Get the DuckType
    * 
@@ -50,6 +52,7 @@ public:
 
 private :
   void handleReceivedPacket();
+  rxDoneCallback recvDataCallback;
 };
 
 #endif
