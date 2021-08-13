@@ -135,6 +135,7 @@ const char MAIN_page[] PROGMEM = R"=====(
         <!-- HTML content of the captive portal below -->
         <h2 class="">You are Connected to a ClusterDuck</h2>
         <div class="content body" id="formContent">
+            <h3><a href="http://192.168.1.1/portal">Open in browser to access any previous client id</a></h3>
             <h3>Fill out the form below to submit information to the ClusterDuck network.</h3>
             <div id="form">
                 <form>

@@ -13,6 +13,8 @@
 
 #pragma once
 
+#include <map>
+
 #include <WString.h>
 
 #include "cdpcfg.h"
@@ -196,9 +198,22 @@ public:
 
 private:
 
+  struct ClientState {
+    ClientState():
+      expirationTime(0),
+      hits(0)
+    {}
+
+    unsigned long expirationTime;
+    unsigned hits;
+  };
+  using ClientMap = std::map<int, ClientState>;
+
   String getMuidStatusMessage(muidStatus status);
   String getMuidStatusString(muidStatus status);
   String createMuidResponseJson(muidStatus status);
+
+  bool shouldForceCaptivePortal(const ClientState & client);
 
   DuckNet(DuckNet const&) = delete;
   DuckNet& operator=(DuckNet const&) = delete;
@@ -212,4 +227,6 @@ private:
   String portal = "";
   String ssid = "";
   String password = "";
+
+  ClientMap clientStates;
 };

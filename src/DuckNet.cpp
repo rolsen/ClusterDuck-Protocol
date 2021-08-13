@@ -5,6 +5,8 @@
 #include "DuckLogger.h"
 #include "include/Duck.h"
 
+#include "include/redirectToPortal.h"
+
 DuckNet::DuckNet(Duck* duckIn):
   duck(duckIn)
 {}
@@ -22,6 +24,19 @@ const char* http_username = CDPCFG_UPDATE_USERNAME;
 const char* http_password = CDPCFG_UPDATE_PASSWORD;
 
 bool restartRequired = false;
+
+// Apple's Captive Network Assistant tear sheet will display if a request to
+// /hotspot-detect.html does not return the text "Success". Once it does return
+// "Success" though, full path URLs will redirect to the browser (instead of the
+// CNA tear sheet). The browser has permission to use `window.localStorage`,
+// while the CNA tear sheet doesn't.
+// https://captivebehavior.wballiance.com/
+const char * APPLE_HOTSPOT_SUCCESS = \
+  "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
+const char * APPLE_HOTSPOT_FAILURE = \
+  "<HTML><HEAD><TITLE>Failure</TITLE></HEAD><BODY>Failure</BODY></HTML>";
+const unsigned long CONFIDENT_TIME_UNTIL_CNA_REFRESH = 1000 * 60 * 5;
+const unsigned long TENTATIVE_TIME_UNTIL_CNA_REFRESH = 1000 * 60;
 
 void DuckNet::setDeviceId(std::vector<byte> deviceId) {
   this->deviceId.insert(this->deviceId.end(), deviceId.begin(), deviceId.end());
@@ -65,6 +80,36 @@ String DuckNet::createMuidResponseJson(muidStatus status) {
   return "{\"status\":\"" + statusStr + "\", \"message\":\"" + message + "\"}";
 }
 
+bool DuckNet::shouldForceCaptivePortal(const ClientState & client) {
+  unsigned long now = millis();
+  if (now > client.expirationTime) {
+    return true;
+  }
+  return false;
+}
+
+String plainProcessor(const String& var) {
+  if (var == "THE_TEMPLATED_TITLE")
+    return F("ClusterDuck");
+  return String();
+}
+
+// String successProcessor(const String& var) {
+//   if (var == "THE_TEMPLATED_TITLE")
+//     return F("Success");
+//   return String();
+// }
+// AwsTemplateProcessor typedSuccess = successProcessor;
+AwsTemplateProcessor typedPlain = plainProcessor;
+
+unsigned int getTentativeCnaDeadline() {
+  return millis() + TENTATIVE_TIME_UNTIL_CNA_REFRESH;
+}
+
+unsigned int getConfidentCnaDeadline() {
+  return millis() + CONFIDENT_TIME_UNTIL_CNA_REFRESH;
+}
+
 int DuckNet::setupWebServer(bool createCaptivePortal, String html) {
   loginfo("Setting up Web Server");
 
@@ -76,14 +121,66 @@ int DuckNet::setupWebServer(bool createCaptivePortal, String html) {
     portal = html;
   }
   webServer.onNotFound([&](AsyncWebServerRequest* request) {
-    logwarn("DuckNet - onNotFound: " + request->url());
-    request->send(200, "text/html", portal);
+    logwarn("DuckNet - onNotFound: " + request->host() + request->url() +
+            ", getRemoteAddress: " + request->client()->getRemoteAddress() +
+            ", getLocalAddress: " + request->client()->getLocalAddress());
+    request->send_P(200, "text/html", REDIRECT_TO_PORTAL_TEMPLATE, typedPlain);
   });
 
   webServer.on("/", HTTP_GET, [&](AsyncWebServerRequest* request) {
+    logdbg("Request of /");
+    request->send_P(200, "text/html", REDIRECT_TO_PORTAL_TEMPLATE, typedPlain);
+  });
+
+  webServer.on("/portal", HTTP_GET, [&](AsyncWebServerRequest* request) {
+    logdbg("Request of /portal");
+    uint32_t clientIpAddress = request->client()->getRemoteAddress();
+    clientStates[clientIpAddress].expirationTime = getConfidentCnaDeadline();
     request->send(200, "text/html", portal);
   });
-  
+
+  webServer.on("/hotspot-detect.html", HTTP_GET, [&](AsyncWebServerRequest* request) {
+
+    bool connectionClose = false;
+    logdbg("headers");
+    int headers = request->headers();
+    for(int i=0;i<headers;i++){
+      AsyncWebHeader* h = request->getHeader(i);
+      logdbg(h->name() + ": " + h->value());
+      if (h->name().equalsIgnoreCase("Connection")
+        && h->value().equalsIgnoreCase("close"))
+      {
+        connectionClose = true;
+      }
+    }
+    logdbg("params");
+    int paramsNumber = request->params();
+    for (int i = 0; i < paramsNumber; i++) {
+      AsyncWebParameter* p = request->getParam(i);
+      logdbg("Param " + String(i) + " - " + p->name() + ": " + p->value());
+    }
+
+
+
+    uint32_t clientIpAddress = request->client()->getRemoteAddress();
+    ClientMap::const_iterator client = clientStates.find(clientIpAddress);
+    if (client == clientStates.end() || shouldForceCaptivePortal(client->second)) {
+      logdbg("Returning failure for /hotspot-detect.html to force captive portal");
+      clientStates[clientIpAddress].expirationTime = getTentativeCnaDeadline();
+      request->send(200, "text/html", APPLE_HOTSPOT_FAILURE);
+    } else {
+      if (connectionClose) {
+        logdbg("Faking /hotspot-detect.html success");
+        request->send(200, "text/html", APPLE_HOTSPOT_SUCCESS);
+      } else {
+        logdbg("Providing redirect to the portal in response to /hotspot-detect.html");
+        request->send_P(200, "text/html", REDIRECT_TO_PORTAL_TEMPLATE, typedPlain);
+      }
+    }
+
+    clientStates[clientIpAddress].hits += 1;
+  });
+
   // This will serve as an easy to access "control panel" to change settings of devices easily
   // TODO: Need to be able to turn off this feature from the application layer for security
   // TODO: Can we limit controls depending on the duck?
